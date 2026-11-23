@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pmscan</title>
+<script>
+  // Apply a saved theme before first paint to avoid a flash.
+  // (Inside the Mac app the theme follows macOS.)
+  try { const t = JSON.parse(localStorage.getItem("theme")); if (!location.search.includes("embedded") && (t === "light" || t === "dark")) document.documentElement.dataset.theme = t; } catch (e) {}
+</script>
+<link rel="stylesheet" href="/static/app/styles.css">
+<script type="module" src="/static/app/main.js"></script>
+</head>
+<body>
+<div id="app"></div>
+<noscript>pmscan's dashboard needs JavaScript. The same data is in data/latest.json, or run <code>pmscan scan</code>.</noscript>
+</body>
+</html>

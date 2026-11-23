@@ -1,0 +1,124 @@
+# Copy to pmscan.toml (picked up automatically) or pass with --config.
+# Every key is optional; these are the defaults.
+
+resolution_lag_days = 1.0   # added to time-to-end when annualizing: settlement isn't instant
+top_n = 25                  # rows per strategy in the terminal
+
+[neg_risk_arb]
+enabled = true
+min_roi = 0.003             # every basket bought must return >= 0.3% after fees
+min_profit_usd = 1.0
+max_capital_usd = 10000.0
+screen_slack = 0.02         # fetch books for groups within 2% of break-even at top of book
+allow_augmented_buy_yes = false
+
+[high_prob]
+enabled = true
+min_price = 0.90
+max_price = 0.995
+min_roi = 0.005
+max_days = 30.0
+max_days_past_end = 7.0
+min_liquidity = 1000.0
+min_volume_24h = 500.0
+min_depth_usd = 50.0
+max_position_usd = 5000.0
+max_candidates = 1500
+max_candidates_us = 300  # Polymarket US serves one order book per request
+max_spread = 0.02           # skip books wider than this: their ask isn't a real price (0 = off)
+# Polymarket US market types the 90c+ strategy skips: the backtest found player props and
+# game-winner markets lost money after fees. [] buys everything.
+exclude_market_types_us = ["props", "moneyline"]
+# Polymarket US: buy only these. A category, or category:market_type ("sports:futures" = season
+# futures; every non-game market there is typed "futures"). [] buys every category.
+include_us = ["politics", "sports:futures"]
+include_live_games = false
+exclude_tags = []           # e.g. ["Sports", "Crypto"]
+exclude_keywords = []       # substrings of event/market slugs, e.g. ["up-or-down"]
+
+[near_certain]              # the 97-99.5c side of very unlikely things, close to the end; takes every [high_prob] key
+enabled = true
+min_price = 0.97
+max_price = 0.995
+min_roi = 0.003
+max_days = 3.0
+max_days_past_end = 1.0
+include_us = ["politics"]   # the only category that paid at these prices in the backtest
+
+[ladder_arb]
+enabled = true
+min_roi = 0.003
+min_profit_usd = 1.0
+max_capital_usd = 10000.0
+screen_slack = 0.01
+max_pairs_per_ladder = 3
+
+[sportsbook_value]          # needs PMSCAN_ODDS_API_KEY
+enabled = true
+sports = ["nfl", "nba", "nhl", "cfb", "cbb", "epl", "ucl"]
+sport_keys = {}             # extra Polymarket code -> Odds API key, e.g. { bra = "soccer_brazil_campeonato" }
+regions = "us"              # "us,eu" adds Pinnacle but doubles credit use
+bookmakers = []             # e.g. ["pinnacle"] to use only sharp books
+min_books = 3
+min_edge = 0.03
+min_fair_prob = 0.10
+max_hours_ahead = 48.0
+max_start_diff_minutes = 90.0
+refresh_minutes = 60.0      # credits used per day ~= sports with games x regions x 24 / (refresh_minutes / 60)
+max_position_usd = 1000.0
+min_depth_usd = 20.0
+
+[alerts]                    # needs Telegram and/or Discord settings in .env
+enabled = true
+strategies = ["neg_risk_arb", "ladder_arb", "sportsbook_value"]
+min_profit_usd = 2.0
+min_edge = 0.05
+cooldown_minutes = 120.0
+max_per_scan = 5
+
+[trading]                   # used by watch/serve --trade (dry run) and --trade --live
+strategies = ["neg_risk_arb"]   # adding "ladder_arb", "sportsbook_value" or "high_prob" adds risk
+max_usd_per_trade = 25.0
+max_usd_per_day = 100.0
+min_profit_usd = 0.50
+min_roi = 0.005
+min_leg_usd = 1.0
+max_legs = 15
+retrade_cooldown_minutes = 10.0
+allow_delayed_markets = false
+unwind_partial_fills = true     # sell back a half-filled basket instead of only halting
+unwind_max_loss_pct = 0.10      # ...accepting at most this much below cost
+
+[paper]                     # simulated trading, on by default in watch/serve (--no-paper to skip)
+enabled = true
+strategies = ["high_prob", "near_certain", "neg_risk_arb", "ladder_arb", "sportsbook_value"]  # one portfolio each
+min_price = 0.90            # high_prob: buy every listed position priced 90c or more...
+max_price = 0.995
+stake_usd = 50.0            # ...with this much each (also each sportsbook value bet)
+near_certain_min_price = 0.97
+near_certain_stake_usd = 200.0  # each near-certain bet returns only 0.5-3%
+basket_stake_usd = 200.0    # most to put into one arbitrage basket
+min_edge_usd = 0.05
+min_roi = 0.002
+starting_balance = 10000.0  # per strategy
+max_open_positions = 500    # per strategy
+max_bets_per_event = 3      # 90c+ / near-certain: most bets held in one event (0 = no limit)
+
+[fast]                      # live order-book feed for the events closest to an arbitrage (serve / Mac app)
+enabled = true
+watch_events = 40
+debounce_seconds = 0.5
+
+[rewards]                   # Polymarket US liquidity rewards (needs the US API key; `pmscan rewards`)
+enabled = true              # paper-test the best quotes in the background (serve / Mac app)
+budget_usd = 50.0           # collateral behind each quote = the most a fill can lose
+max_quotes = 5              # paper quotes at once, one per program
+horizon_hours = 24.0        # also rank periods starting within this long
+max_books = 400             # order books read per scan
+per_program = 25
+max_ticks_behind = 3
+min_per_hour = 0.05         # paper: skip quotes estimated below this
+paper_live = false          # paper: also quote during live games (fills there get picked off)
+paper_skip_programs = ["crypto", "metals", "usgas", "gas_state", "diesel"]  # fast-moving prices: fills lose
+tick_seconds = 60.0
+rescan_minutes = 15.0

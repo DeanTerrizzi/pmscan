@@ -1,0 +1,25 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Install
+        run: uv sync --all-extras
+      - name: Tests
+        run: uv run pytest -q
+      - name: Lint
+        run: uvx ruff check pmscan tests --select F,E9,B,I --line-length 120
+
+  macos-app:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Type-check the SwiftUI app
+        run: swiftc -parse-as-library -typecheck -target "$(uname -m)-apple-macos12.0" macos/Sources/*.swift
