@@ -314,6 +314,13 @@ How positions are handled:
   NBA, a golf tour), read from the event; other markets group by category, such as politics.
   Separate events in one league ride on the same games: in the first week, 63% of the 90¢+ money
   sat in college football markets that all moved with the same weekends' results.
+- **Arbitrage fills are double-checked.** Each paper arbitrage basket is bought on order books read
+  a fraction of a second after the edge was seen, but a real order lands later and races other
+  traders. So the same basket is re-checked on fresh books 1, 3 and 10 seconds later
+  (`probe_delays_s`), with the live trader's own rules, and logged to `probes.jsonl`. The Paper
+  page's **Would a slower order still fill?** table shows how often the edge survived, how much
+  of the size was still there, and how much profit was kept. This matters most for in-play
+  baskets such as eBattles (10-minute esports matches), where prices move every few seconds.
 - **Valuation** uses each position's best bid. The bid/ask spread therefore shows up as an
   immediate small loss.
 - **Settlement** uses Polymarket's final resolution.

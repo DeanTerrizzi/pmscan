@@ -150,6 +150,9 @@ class PaperConfig:
     # sports: college football, NFL, NBA, a golf tour, ...; other markets: their category) at once
     # (0 = no limit). Events in one league ride on the same games, which the per-event cap can't see.
     max_league_share: float = 0.20
+    # Arbitrage baskets: after each paper entry, re-check the same basket on fresh order books this
+    # many seconds later and log whether a slower real order would still have filled ([] = off).
+    probe_delays_s: list[float] = field(default_factory=lambda: [1.0, 3.0, 10.0])
 
 
 @dataclass

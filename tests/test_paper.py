@@ -119,7 +119,7 @@ def test_arbitrage_baskets_are_bought_whole_and_settle_as_one_bet(tmp_path):
                       cost=90, payout=100, roi=0.11, annualized=None, days_to_end=5, risk="low", notes=[],
                       legs=legs, score=10.0)
     client = FakeClient(books={f"y{i}": book(f"y{i}", [(0.30, 1000)]) for i in (1, 2, 3)})
-    cfg = PaperConfig(strategies=["neg_risk_arb"], basket_stake_usd=100)
+    cfg = PaperConfig(strategies=["neg_risk_arb"], basket_stake_usd=100, probe_delays_s=[])
     trader = PaperTrader(cfg, client, tmp_path)
     trader.process(scan(ms, [arb]), NOW)
     nr = trader.books["neg_risk_arb"]
@@ -200,3 +200,40 @@ def test_caps_money_per_league(tmp_path):
     plain = [replace(market(i), event_slug=f"e{i}") for i in range(1, 6)]
     t2.process(scan(plain, [high_prob(m) for m in plain]), NOW)
     assert len(t2.books["high_prob"].open) == 5
+
+
+def test_probes_record_whether_a_slower_order_would_still_fill(tmp_path):
+    ms = [market(i, bid=None, ask=0.30, group="g") for i in (1, 2, 3)]
+    legs = [Leg.for_market(m, 0, shares=100, avg_price=0.30, limit_price=0.30) for m in ms]
+    arb = Opportunity(strategy="neg_risk_arb", kind="buy_all_yes", title="Who wins?", subtitle="", url="u",
+                      cost=90, payout=100, roi=0.11, annualized=None, days_to_end=1, risk="low", notes=[],
+                      legs=legs, score=10.0)
+    client = FakeClient(books={f"y{i}": book(f"y{i}", [(0.30, 1000)]) for i in (1, 2, 3)})
+    nr = PaperTrader(PaperConfig(strategies=["neg_risk_arb"], basket_stake_usd=100, probe_delays_s=[]),
+                     client, tmp_path).books["neg_risk_arb"]
+    nr.config = replace(nr.config, probe_delays_s=[1.0, 3.0, 10.0])
+    plan = nr._planner(100)._plan(arb, NOW)
+    # The edge shrinks between checks: half the depth after 1s, gone after 3s, the network fails at 10s.
+    states = iter([{"y1": book("y1", [(0.30, 1000)]), "y2": book("y2", [(0.30, 1000)]),
+                    "y3": book("y3", [(0.30, 1000), (0.40, 1000)])}, None, "boom"])
+
+    def step(_seconds):
+        state = next(states)
+        if state is None:
+            client.books["y1"] = book("y1", [(0.45, 1000)])
+        elif state == "boom":
+            client.get_books = lambda tokens: (_ for _ in ()).throw(ConnectionError("offline"))
+        else:
+            client.books.update(state)
+            client.books["y2"] = book("y2", [(0.30, plan.units / 2 + 5)])
+
+    nr._run_probes(arb, plan, "b1", 100, sleep=step)
+    [row] = [json.loads(line) for line in nr.probes_path.read_text().splitlines()]
+    first, second, third = row["checks"]
+    assert first["ok"] is True and 0.4 < first["share"] < 0.6 and first["profit"] > 0
+    assert second == {"delay_s": 3.0, "ok": False, "share": 0.0, "profit": 0.0,
+                      "reason": second["reason"]} and "asks" in second["reason"]
+    assert third["ok"] is None  # unknown, not counted as a miss
+    s = nr.probe_summary()
+    assert s["baskets"] == 1 and [d["delay_s"] for d in s["delays"]] == [1.0, 3.0]
+    assert s["delays"][0]["still_profitable"] == 1 and s["delays"][1]["still_profitable"] == 0

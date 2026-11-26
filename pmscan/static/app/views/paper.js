@@ -57,6 +57,8 @@ export function Paper({ latest }) {
       ]} />
     </section>
 
+    <${ArbProbes} books=${books} />
+
     <h2 class="section-title">Equity over time</h2>
     <div class="grid-2">
       ${books.map(([, b]) => {
@@ -121,4 +123,37 @@ export function Paper({ latest }) {
         ]} />
     </section>
   </div>`;
+}
+
+// After each arbitrage entry the paper trader re-checks the same basket on fresh books a few seconds
+// later: would a real order, which lands later than the paper fill, still have got it?
+function ArbProbes({ books }) {
+  const probed = books.filter(([, b]) => b.probes && b.probes.baskets);
+  if (!probed.length) return null;
+  const rows = probed.flatMap(([, b]) => b.probes.delays.map((d) => ({ ...d, title: b.summary.title, baskets: b.probes.baskets })));
+  const recent = probed.flatMap(([, b]) => b.probes.recent.map((r) => ({ ...r, strategy: b.summary.title })))
+    .sort((a, b) => (a.ts < b.ts ? 1 : -1)).slice(0, 20);
+  const delays = [...new Set(recent.flatMap((r) => r.checks.map((c) => c.delay_s)))].sort((a, b) => a - b);
+  const checkText = (c) => (!c ? "–" : c.ok == null ? "unknown" : c.ok ? `${pct(c.share, 0)} · ${signedUsd(c.profit)}` : "gone");
+  return html`<section class="card">
+    <div class="card-head"><div class="card-titles"><h3>Would a slower order still fill?</h3>
+      <p class="sub">A paper arbitrage fills on order books read a fraction of a second after the edge appeared. A real
+        order lands later and races other traders. So after each paper entry the same basket is re-checked on fresh
+        books a few seconds later, with the live trader's own rules. If the edge is usually gone after a second,
+        the paper profit isn't reachable for real.</p></div></div>
+    <${DataTable} rows=${rows} columns=${[
+      { label: "Strategy", get: (r) => r.title },
+      { label: "Checked after", get: (r) => `${r.delay_s}s` },
+      { label: "Still profitable", render: (r) => `${count(r.still_profitable)} of ${count(r.checked)}` },
+      { label: "Size still available", get: (r) => r.avg_size_share, format: (v) => pct(v, 0), num: true },
+      { label: "Profit kept", get: (r) => r.profit_kept, format: (v) => pct(v, 0), num: true },
+    ]} />
+    <h4 class="sub-head">Latest baskets</h4>
+    <${DataTable} rows=${recent} columns=${[
+      { label: "Bought", get: (r) => dateTime(r.ts) },
+      { label: "Basket", get: (r) => truncate(r.title, 60) },
+      { label: "Paper profit", get: (r) => r.entered.profit, format: signedUsd, num: true },
+      ...delays.map((d) => ({ label: `After ${d}s`, render: (r) => checkText(r.checks.find((c) => c.delay_s === d)) })),
+    ]} />
+  </section>`;
 }

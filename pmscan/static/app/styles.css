@@ -109,6 +109,7 @@ footer { color: var(--muted); font-size: 12px; padding: 8px 24px 32px; max-width
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin: 0; min-width: 0; }
 .card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
 .card-titles h3 { font-size: 14px; margin: 0; }
+.sub-head { font-size: 13px; margin: 18px 0 8px; }
 .card-titles .sub { margin: 2px 0 0; }
 .empty { color: var(--muted); margin: 8px 0; }
 .empty-card h3 { margin: 0 0 6px; font-size: 15px; }

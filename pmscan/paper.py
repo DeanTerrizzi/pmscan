@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import json
 import shutil
+import threading
+import time
 from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass, fields
 from datetime import datetime, timezone
@@ -43,6 +45,8 @@ TITLES = {
 }
 
 BANDED = {"high_prob", "near_certain"}  # single positions bought inside a price band
+PROBED = {"neg_risk_arb", "ladder_arb"}  # baskets re-checked after entry (see PaperBook._run_probes)
+_probe_lock = threading.Lock()
 
 
 @dataclass
@@ -269,12 +273,7 @@ class PaperBook:
             stake = min(cfg.basket_stake_usd if len(o.legs) > 1 else cfg.stake_usd, self.cash)
             if stake < 1.0:
                 break
-            planner = AutoTrader(
-                TradingConfig(strategies=[self.strategy], max_usd_per_trade=stake, max_usd_per_day=float("inf"),
-                              min_profit_usd=cfg.min_edge_usd, min_roi=cfg.min_roi, max_legs=10_000,
-                              allow_delayed_markets=True),
-                self.client, Ledger(self.dir / "planner"),
-            )
+            planner = self._planner(stake)
             try:
                 plan = planner._plan(o, now)
             except Skip:
@@ -289,7 +288,85 @@ class PaperBook:
                                               amount + fees * amount / notional, amount / plan.units, now,
                                               basket=basket, mark=None))
             held.add(o.key)
+            if self.strategy in PROBED and cfg.probe_delays_s:
+                threading.Thread(target=self._run_probes, args=(o, plan, basket, stake), daemon=True,
+                                 name=f"paper-probe-{self.strategy}").start()
         return entered
+
+    def _planner(self, stake: float) -> AutoTrader:
+        """The live trader's own sizing and checks, used to price paper entries like real orders."""
+        cfg = self.config
+        return AutoTrader(
+            TradingConfig(strategies=[self.strategy], max_usd_per_trade=stake, max_usd_per_day=float("inf"),
+                          min_profit_usd=cfg.min_edge_usd, min_roi=cfg.min_roi, max_legs=10_000,
+                          allow_delayed_markets=True),
+            self.client, Ledger(self.dir / "planner"),
+        )
+
+    @property
+    def probes_path(self) -> Path:
+        return self.dir / "probes.jsonl"
+
+    def _run_probes(self, o: Opportunity, plan: Any, basket: str, stake: float, sleep=time.sleep) -> None:
+        """Would a slower order have got this basket too? Re-plan it on fresh books after each delay.
+
+        A paper entry fills on books fetched a fraction of a second after the edge was seen; a real
+        order lands later and races other traders. This records, per delay, how much of the entry
+        size would still have filled and for what profit. It never changes the portfolio.
+        """
+        checks, start = [], time.monotonic()
+        for delay in sorted(self.config.probe_delays_s):
+            sleep(max(0.0, delay - (time.monotonic() - start)))
+            check: dict[str, Any] = {"delay_s": delay}
+            try:
+                again = self._planner(stake)._plan(o, _now())
+                check.update(ok=True, units=round(again.units, 4), share=round(min(1.0, again.units / plan.units), 4),
+                             profit=round(again.edge, 4))
+            except Skip as exc:
+                check.update(ok=False, share=0.0, profit=0.0, reason=str(exc))
+            except Exception as exc:  # network trouble: unknown, not a miss
+                check.update(ok=None, reason=f"{type(exc).__name__}: {exc}")
+            checks.append(check)
+        row = {"ts": _now().isoformat(), "basket": basket, "title": o.title, "kind": o.kind,
+               "entered": {"units": round(plan.units, 4), "cost": round(plan.cost, 4), "profit": round(plan.edge, 4)},
+               "checks": checks}
+        try:
+            with _probe_lock:
+                self.dir.mkdir(parents=True, exist_ok=True)
+                with open(self.probes_path, "a") as fh:
+                    fh.write(json.dumps(row) + "\n")
+        except OSError:
+            pass  # e.g. the portfolio was reset meanwhile
+
+    def probe_summary(self) -> dict[str, Any] | None:
+        """Per delay: how many entries were still profitable, the share of the size and profit kept."""
+        if self.strategy not in PROBED or not self.probes_path.exists():
+            return None
+        rows = []
+        for line in self.probes_path.read_text().splitlines():
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+        delays: dict[float, dict[str, float]] = {}
+        for r in rows:
+            for c in r["checks"]:
+                if c.get("ok") is None:
+                    continue
+                d = delays.setdefault(c["delay_s"], {"n": 0, "still": 0, "share": 0.0, "profit": 0.0, "entered": 0.0})
+                d["n"] += 1
+                d["still"] += bool(c["ok"])
+                d["share"] += c.get("share", 0.0)
+                d["profit"] += c.get("profit", 0.0)
+                d["entered"] += r["entered"]["profit"]
+        return {
+            "baskets": len(rows),
+            "delays": [{"delay_s": k, "checked": v["n"], "still_profitable": v["still"],
+                        "avg_size_share": v["share"] / v["n"] if v["n"] else None,
+                        "profit_kept": v["profit"] / v["entered"] if v["entered"] else None}
+                       for k, v in sorted(delays.items())],
+            "recent": rows[-20:][::-1],
+        }
 
     def _position(self, o: Opportunity, market: Market, side: int, outcome: str, url: str, shares: float,
                   cost: float, avg: float, now: datetime, basket: str, mark: float | None) -> PaperPosition:
@@ -460,5 +537,6 @@ def paper_snapshot(data_dir: Path, config: PaperConfig, equity_limit: int = 5000
             "open": sorted((asdict(p) for p in book.open.values()), key=lambda p: p["opened_at"], reverse=True),
             "closed": [asdict(p) for p in reversed(book.closed[-500:])],
             "equity": equity,
+            "probes": book.probe_summary(),
         }
     return {"enabled": config.enabled, "summary": trader.summary(), "books": books}

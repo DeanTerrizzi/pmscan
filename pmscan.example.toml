@@ -104,6 +104,7 @@ starting_balance = 10000.0  # per strategy
 max_open_positions = 500    # per strategy
 max_bets_per_event = 3      # 90c+ / near-certain: most bets held in one event (0 = no limit)
 max_league_share = 0.20     # ...and most of the starting balance in one league or category (0 = no limit)
+probe_delays_s = [1.0, 3.0, 10.0]  # arbitrage: re-check each paper basket this long after entry ([] = off)
 
 [fast]                      # live order-book feed for the events closest to an arbitrage (serve / Mac app)
 enabled = true
