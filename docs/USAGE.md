@@ -309,6 +309,11 @@ How positions are handled:
 - **At most 3 bets per event** for 90¢+ and near-certain (`max_bets_per_event`; `0` = no limit),
   best-scoring first. Markets in one event often go wrong together (a rankings surprise knocks out
   several "qualifies" bets at once), so one surprise can't sink a pile of bets.
+- **At most 20% of the balance in one league** for 90¢+ and near-certain (`max_league_share`;
+  `0` = no limit), on Polymarket US. A league is a sport's competition (college football, NFL,
+  NBA, a golf tour), read from the event; other markets group by category, such as politics.
+  Separate events in one league ride on the same games: in the first week, 63% of the 90¢+ money
+  sat in college football markets that all moved with the same weekends' results.
 - **Valuation** uses each position's best bid. The bid/ask spread therefore shows up as an
   immediate small loss.
 - **Settlement** uses Polymarket's final resolution.

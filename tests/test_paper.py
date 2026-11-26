@@ -176,3 +176,27 @@ def test_caps_bets_per_event(tmp_path):
     t2 = PaperTrader(replace(CFG, max_bets_per_event=0), FakeClient(books), tmp_path / "nocap")
     t2.process(scan(ms, [high_prob(m) for m in ms]), NOW)
     assert len(t2.books["high_prob"].open) == 6
+
+
+def test_caps_money_per_league(tmp_path):
+    def sports(i, slug):
+        return replace(market(i), category="sports", event_slug=slug)
+    ms = [sports(i, f"cfb-event{i}-2026") for i in range(1, 6)] + [sports(6, "nba-cup-2026"),
+                                                                    replace(market(7), category="politics")]
+    books = {f"n{i}": book(f"n{i}", [(0.95, 1000)]) for i in range(1, 8)}
+    # $50 a bet, 15% of $1,000 = $150: three bets per league.
+    trader = PaperTrader(replace(CFG, starting_balance=1000, max_league_share=0.15), FakeClient(books), tmp_path)
+    hp = trader.books["high_prob"]
+    trader.process(scan(ms, [high_prob(m) for m in ms]), NOW)
+    leagues = sorted(p.league for p in hp.open.values())
+    assert leagues == ["politics", "sports:cfb", "sports:cfb", "sports:cfb", "sports:nba"]
+    # Held positions count on later scans, including ones saved before the league was stored.
+    for p in hp.open.values():
+        p.league = ""
+    trader.process(scan(ms, [high_prob(m) for m in ms]), NOW)
+    assert len(hp.open) == 5
+    # polymarket.com markets have no category: only the per-event cap applies.
+    t2 = PaperTrader(replace(CFG, starting_balance=1000, max_league_share=0.15), FakeClient(books), tmp_path / "intl")
+    plain = [replace(market(i), event_slug=f"e{i}") for i in range(1, 6)]
+    t2.process(scan(plain, [high_prob(m) for m in plain]), NOW)
+    assert len(t2.books["high_prob"].open) == 5

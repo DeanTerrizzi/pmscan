@@ -22,7 +22,7 @@ fills before any real money is involved.
 | | |
 |---|---|
 | **Languages** | Python 3.11+ (about 7,000 lines), JavaScript (2,000), Swift (1,900) |
-| **Tests** | 159 pytest tests, no network needed; Ruff lint; CI on every push |
+| **Tests** | 160 pytest tests, no network needed; Ruff lint; CI on every push |
 | **Scan** | About 25k markets in about 30 s on either venue, plus a live WebSocket feed |
 | **Strategies** | 2 arbitrage, 1 sportsbook comparison, 2 high-probability yield, plus liquidity rewards |
 | **Evidence** | Backtest over 10,000 settled markets and 12,000 simulated bets; 5 paper portfolios plus a rewards paper test |
@@ -112,7 +112,8 @@ The full reasoning and trade-offs are in **[docs/DECISIONS.md](docs/DECISIONS.md
      faking 1¢ spreads.
 5. **Isolated failure modes in paper trading.**
    - One portfolio per strategy, so results can be compared directly.
-   - At most 3 bets per event, because markets in one event fail together.
+   - At most 3 bets per event, and at most 20% of the balance per league, because related markets
+     fail together.
 6. **No build step and almost no dependencies.**
    - The dashboard is plain ES modules (Preact + htm, vendored) served by Python's
      `ThreadingHTTPServer`.
@@ -149,7 +150,7 @@ The research write-up is in **[docs/RESEARCH.md](docs/RESEARCH.md)**. In short:
 
 ```bash
 uv sync --all-extras
-uv run pytest -q          # 159 tests, about 3 seconds, no network
+uv run pytest -q          # 160 tests, about 3 seconds, no network
 ```
 
 - **No network in tests.** HTTP clients are replaced by small fakes that serve order books and

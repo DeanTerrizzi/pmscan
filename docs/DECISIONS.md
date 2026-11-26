@@ -138,6 +138,19 @@ ones. Positions record their event, and older positions fall back to a lookup.
   one bet.
 - A single simple rule was preferred to modelling correlation per event type.
 
+**Follow-up: a per-league cap.**
+- A week later, 63% of the 90¢+ money sat in college football, spread over many events:
+  - win totals;
+  - playoff qualifiers;
+  - conference championships;
+  - the weekly rankings.
+- All of those ride on the same few weekends of games, which the per-event cap can't see.
+- New bets now also stop once one league holds 20% of the balance (`max_league_share`). The
+  league is read from the event's slug on Polymarket US, and non-sports markets group by
+  category.
+- This came from looking at where the paper losses were, not from the backtest. The backtest
+  had only 18 college football markets.
+
 ---
 
 ## 7. A separate paper portfolio per strategy

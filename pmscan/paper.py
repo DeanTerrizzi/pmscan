@@ -65,6 +65,7 @@ class PaperPosition:
     basket: str = ""  # positions bought together share one id (one bet)
     bet: str = ""  # what the whole bet was, e.g. the event title
     event: str = ""  # the market's event (slug), for the per-event cap
+    league: str = ""  # e.g. "sports:cfb" or "politics", for the per-league cap ("" = unknown)
 
     @property
     def id(self) -> str:
@@ -85,6 +86,16 @@ class PaperPosition:
 
 def _event_key(market: Market) -> str:
     return market.event_slug or market.event_title or market.id
+
+
+def _league_key(market: Market) -> str:
+    """Markets that ride on the same games or news. Polymarket US sports event slugs start with the
+    league ("cfb-cfp-2026-12-06-playoffq", "nfl-wins-ou-..."); other markets group by category.
+    polymarket.com has no categories, so its markets aren't grouped (only the per-event cap applies)."""
+    category = getattr(market, "category", "") or ""
+    if category == "sports" and market.event_slug:
+        return f"sports:{market.event_slug.split('-')[0]}"
+    return category
 
 
 def _now() -> datetime:
@@ -191,12 +202,22 @@ class PaperBook:
         candidates.sort(key=lambda o: o.score, reverse=True)
         # At most max_bets_per_event per event: markets in one event often go wrong together.
         per_event = Counter(self._event_of(p, index) for p in self.open.values())
+        # ...and at most max_league_share of the balance per league: one weekend's games can move
+        # every college football market at once, across many events.
+        per_league: Counter[str] = Counter()
+        for p in self.open.values():
+            per_league[self._league_of(p, index)] += p.cost
+        league_cap = cfg.max_league_share * self.starting_balance
         picks = []
         for o in candidates:
-            event = _event_key(index[o.legs[0].token_id][0])
+            market = index[o.legs[0].token_id][0]
+            event, league = _event_key(market), _league_key(market)
             if cfg.max_bets_per_event > 0 and per_event[event] >= cfg.max_bets_per_event:
                 continue
+            if cfg.max_league_share > 0 and league and per_league[league] + stake > league_cap + 1e-9:
+                continue
             per_event[event] += 1
+            per_league[league] += stake
             picks.append(o)
         room = min(cfg.max_open_positions - len(self.open), int(self.cash // stake))
         picks = picks[: max(0, room)]
@@ -226,6 +247,14 @@ class PaperBook:
         if p.token_id in index:  # positions from before the event was stored
             return _event_key(index[p.token_id][0])
         return p.market_id
+
+    @staticmethod
+    def _league_of(p: PaperPosition, index: Index) -> str:
+        if p.league:
+            return p.league
+        if p.token_id in index:  # positions from before the league was stored
+            return _league_key(index[p.token_id][0])
+        return ""
 
     def _enter_baskets(self, opps: list[Opportunity], index: Index, now: datetime) -> list[PaperPosition]:
         """Each arbitrage basket / value bet, sized against fresh books like the live trader."""
@@ -269,7 +298,7 @@ class PaperBook:
             side=side, url=url, strategy=self.strategy, shares=shares, cost=cost, avg_price=avg,
             opened_at=now.isoformat(), end_date=market.end_date.isoformat() if market.end_date else None,
             mark=mark if mark is not None else avg, basket=basket, bet=o.title if len(o.legs) > 1 else "",
-            event=_event_key(market),
+            event=_event_key(market), league=_league_key(market),
         )
         self.cash -= cost
         self.open[p.id] = p

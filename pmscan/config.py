@@ -146,6 +146,10 @@ class PaperConfig:
     # high_prob / near_certain: most bets held in one event at once (0 = no limit). Markets in one
     # event often go wrong together (CFP rankings, conference qualifiers), so one surprise can't sink many bets.
     max_bets_per_event: int = 3
+    # high_prob / near_certain: most of the starting balance held in one league (Polymarket US
+    # sports: college football, NFL, NBA, a golf tour, ...; other markets: their category) at once
+    # (0 = no limit). Events in one league ride on the same games, which the per-event cap can't see.
+    max_league_share: float = 0.20
 
 
 @dataclass
