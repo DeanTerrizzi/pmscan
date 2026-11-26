@@ -373,7 +373,7 @@ struct GeneralSettings: View {
                 Toggle("Keep running in the menu bar when the window is closed", isOn: $model.keepRunningInMenuBar)
                 Toggle("Keep this Mac awake while pmscan runs", isOn: $model.preventSleep)
             }
-            Text("Closing the window leaves pmscan running behind its menu-bar icon (no Dock icon); choose Open pmscan there to bring it back. At login it starts the same way, without a window. pmscan only scans, paper trades and trades while it's running and the Mac is awake. Keeping the Mac awake stops idle sleep; the display can still turn off. A laptop with its lid closed still sleeps unless it's on power with an external display.")
+            Text("Closing the window leaves pmscan running behind its menu-bar icon (no Dock icon); choose Open pmscan there to bring it back. At login it starts the same way, without a window. If pmscan or its scanner ever crashes or stops responding, it restarts on its own; after the Mac wakes or the network comes back, it scans again right away. pmscan only scans, paper trades and trades while it's running and the Mac is awake. Keeping the Mac awake stops idle sleep; the display can still turn off. A laptop with its lid closed still sleeps unless it's on power with an external display.")
                 .font(.caption).foregroundColor(.secondary).fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
         }

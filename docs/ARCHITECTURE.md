@@ -98,7 +98,11 @@ shared, so a new strategy adds no requests for markets already being checked.
   - It updates quotes in memory as messages arrive.
   - When a market crosses into an edge, it hands the event back for a normal book fetch and
     evaluation.
-  - It reconnects with backoff.
+  - It reconnects with backoff, and also when the socket has gone 5 minutes without a message or
+    the machine has just woken. On macOS the monotonic clock stops during sleep while the wall
+    clock doesn't, so a jump between the two shows the machine slept.
+- **Scan loop:** after a failed scan it retries after 15, 30, then 60 seconds, and it scans
+  immediately on wake (detected the same way), instead of waiting out the interval.
 - **Rewards paper test:** ticks on its own timer, checking whether resting quotes would have
   been filled by real trades.
 
@@ -155,14 +159,19 @@ The app is a SwiftUI shell, about 1,900 lines, built with plain `swiftc` by `mac
   virtualenv.
   - It picks a free port, preferring a fixed one, and waits for the server to answer.
   - It restarts the server when settings change.
-  - It logs to a file.
+  - It watches the server: if the server exits, stops answering for 3 minutes, or doesn't come
+    up, the app restarts it with exponential backoff (5 s up to 2 minutes). The backoff resets
+    once the server has been healthy for 5 minutes.
+  - It appends to a log file, so the cause of a crash survives the restart.
 - **`WebStore.swift`** owns the single `WKWebView`. The native sidebar drives navigation, and
   the web app reports route changes back.
 - **`Account.swift`** stores keys in the Keychain (`SecItem*`). They're passed to the child
   process only through its environment, and never written to disk.
-- **`KeepRunning.swift`** has three parts:
-  - a per-user LaunchAgent to start at login (the app supports macOS 12, which lacks
-    `SMAppService`);
+- **`KeepRunning.swift`** has four parts:
+  - a per-user LaunchAgent that starts the app at login. The app supports macOS 12, which lacks
+    `SMAppService`. The agent uses `KeepAlive` with `SuccessfulExit = false`, so launchd
+    relaunches the app after a crash but not after a deliberate Quit;
+  - a single-instance guard, because two copies would write the same paper portfolios;
   - a menu-bar `NSStatusItem`;
   - a background mode with no window or Dock icon.
 - **`Notifier.swift`** sends native notifications for new arbitrage and trading halts.

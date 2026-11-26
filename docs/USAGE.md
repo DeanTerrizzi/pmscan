@@ -73,6 +73,18 @@ What the app adds on top of the dashboard:
     menu, or open the app again, to bring the window back; **Quit pmscan** there stops it.
   - Keep the Mac awake while the bot runs. The display can still sleep, but a laptop with its lid
     closed sleeps unless it's on power with an external display.
+  - Recovers on its own:
+    - If the scanner crashes, stops answering for 3 minutes, or doesn't start, the app restarts
+      it after 5 seconds, backing off to 2 minutes if it keeps failing.
+    - If the app itself crashes, macOS relaunches it within about 30 seconds. This works through
+      the login item, so "Open at login" must be on. Choosing **Quit pmscan** still stops it for
+      good.
+    - After the Mac wakes from sleep, it scans again right away and reopens the live feed.
+    - When the network drops, failed scans retry after 15, 30, then 60 seconds instead of waiting
+      the full interval.
+    - The live feed also reconnects if it goes 5 minutes without an update.
+    - Only one copy of the app runs at a time.
+    - `~/Library/Logs/pmscan/scanner.log` keeps every restart and its reason.
 - **Exchange (Settings › General or Account).** Polymarket US (the default) or polymarket.com.
   Switching restarts the scanner, and each exchange keeps its own results and paper portfolios.
   The sidebar shows which one is active.

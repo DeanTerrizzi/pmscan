@@ -59,20 +59,34 @@ final class Backend: ObservableObject {
 
     var onNewArbitrage: (([Arbitrage]) -> Void)?
     var onHalted: ((String) -> Void)?
+    /// Asked to start the scanner again after it crashed, hung or failed to start.
+    var onNeedsRestart: (() -> Void)?
+
+    /// Polls missed in a row before a running scanner counts as hung (polls are 10 s apart).
+    /// Timers don't fire while the Mac sleeps, so sleep never counts against it.
+    static let maxMissedPolls = 18
 
     private var process: Process?
     private var pollTimer: Timer?
     private var generation = 0
     private var seenArbitrage: Set<String>?  // nil until the first scan is seen: don't notify for old ones
     private var lastHalted: String?
+    private var restartAttempts = 0
+    private var restartWork: DispatchWorkItem?
+    private var runningSince: Date?
+    private var missedPolls = 0
 
     // MARK: lifecycle
 
     func start(mode: TradingMode, paper: Bool, venue: Venue, environment extra: [String: String]) {
         stop()
+        restartWork?.cancel()
+        restartWork = nil
         generation += 1
         let gen = generation
         state = .starting
+        runningSince = nil
+        missedPolls = 0
         counts = [:]
         seenArbitrage = nil
 
@@ -103,8 +117,13 @@ final class Backend: ObservableObject {
         extra.forEach { env[$0.key] = $0.value }  // live-trading credentials from the Keychain, never on disk
         proc.environment = env
 
-        FileManager.default.createFile(atPath: Self.logURL.path, contents: nil)
+        // Append, so the reason for a crash is still there after the automatic restart; start over past 5 MB.
+        let logSize = (try? FileManager.default.attributesOfItem(atPath: Self.logURL.path)[.size] as? Int) ?? nil
+        if logSize == nil || logSize! > 5_000_000 {
+            FileManager.default.createFile(atPath: Self.logURL.path, contents: nil)
+        }
         if let log = try? FileHandle(forWritingTo: Self.logURL) {
+            log.seekToEndOfFile()
             log.write("pmscan scanner started \(Date()) on port \(port), \(venue.title), trading \(mode.short), paper \(paper ? "on" : "off")\n".data(using: .utf8)!)
             proc.standardOutput = log
             proc.standardError = log
@@ -114,7 +133,7 @@ final class Backend: ObservableObject {
                 guard let self, self.generation == gen, self.process === p else { return }
                 self.process = nil
                 self.pollTimer?.invalidate()
-                self.state = .failed("The scanner stopped unexpectedly (exit code \(p.terminationStatus)). The log has details.")
+                self.scheduleRestart("The scanner stopped unexpectedly (exit code \(p.terminationStatus)).", generation: gen)
             }
         }
         do {
@@ -159,10 +178,11 @@ final class Backend: ObservableObject {
                 guard let self, self.generation == gen, self.process != nil else { return }
                 if (response as? HTTPURLResponse)?.statusCode == 200 {
                     self.state = .running(url)
+                    self.runningSince = Date()
                     self.startPolling(url: url, generation: gen)
                 } else if Date() > deadline {
-                    self.state = .failed("The scanner didn't start within 90 seconds. The log has details.")
                     self.stop()
+                    self.scheduleRestart("The scanner didn't start within 90 seconds.", generation: gen)
                 } else {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                         self.waitUntilReady(url: url, generation: gen, deadline: deadline)
@@ -183,13 +203,45 @@ final class Backend: ObservableObject {
     }
 
     private func poll(url: URL, generation gen: Int) {
-        URLSession.shared.dataTask(with: url.appendingPathComponent("api/latest")) { [weak self] data, _, _ in
-            guard let data, let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return }
+        var request = URLRequest(url: url.appendingPathComponent("api/latest"))
+        request.timeoutInterval = 20
+        URLSession.shared.dataTask(with: request) { [weak self] data, _, _ in
+            let obj = data.flatMap { (try? JSONSerialization.jsonObject(with: $0)) as? [String: Any] }
             DispatchQueue.main.async {
-                guard let self, self.generation == gen else { return }
+                guard let self, self.generation == gen, self.process != nil else { return }
+                guard let obj else { return self.missedPoll(generation: gen) }
+                self.missedPolls = 0
+                if let since = self.runningSince, Date().timeIntervalSince(since) > 300 {
+                    self.restartAttempts = 0  // it has been healthy for a while: next failure retries quickly
+                }
                 self.apply(obj)
             }
         }.resume()
+    }
+
+    /// The scanner is running but not answering: after a few minutes of that, replace it.
+    private func missedPoll(generation gen: Int) {
+        missedPolls += 1
+        guard missedPolls >= Self.maxMissedPolls else { return }
+        stop()
+        scheduleRestart("The scanner stopped responding.", generation: gen)
+    }
+
+    /// Crashes and hangs restart on their own: after 5 s, then 10, 20, ... up to 2 minutes apart.
+    private func scheduleRestart(_ reason: String, generation gen: Int) {
+        let delay = min(5.0 * pow(2.0, Double(restartAttempts)), 120)
+        restartAttempts += 1
+        state = .failed("\(reason) Restarting in \(Int(delay)) seconds. The log has details.")
+        if let log = try? FileHandle(forWritingTo: Self.logURL) {
+            log.seekToEndOfFile()
+            log.write("pmscan app: \(reason) Restarting in \(Int(delay))s (attempt \(restartAttempts)) \(Date())\n".data(using: .utf8)!)
+        }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.generation == gen else { return }  // someone restarted it already
+            self.onNeedsRestart?()
+        }
+        restartWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
     private func apply(_ obj: [String: Any]) {

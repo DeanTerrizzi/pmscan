@@ -330,6 +330,7 @@ OnResult = Callable[[ScanResult], list[str]]
 
 def _scan_loop(scanner: Scanner, state: _State, data_dir: Path, stop: threading.Event,
                on_result: OnResult | None, fast: FastWatcher | None = None) -> None:
+    failures = 0
     while not stop.is_set():
         started = time.monotonic()
         with state.lock:
@@ -349,14 +350,42 @@ def _scan_loop(scanner: Scanner, state: _State, data_dir: Path, stop: threading.
         except Exception as exc:  # keep serving the last good result
             log.exception("scan failed")
             error = f"{type(exc).__name__}: {exc}"
+        failures = 0 if error is None else failures + 1
         wait = max(5.0, state.interval - (time.monotonic() - started))
+        if failures:  # e.g. offline or just woken: retry sooner, backing off to the normal interval
+            wait = min(wait, RETRY_AFTER_FAILURE_S * 2 ** (failures - 1))
         with state.lock:
             state.scanning = False
             state.error = error
             if payload is not None:
                 state.result, state.index = payload, index
             state.next_scan_at = time.time() + wait
-        stop.wait(wait)
+        if wait_or_wake(stop, wait):
+            log.info("woke from sleep: scanning now")
+
+
+RETRY_AFTER_FAILURE_S = 15.0
+SLEEP_JUMP_S = 30.0
+
+
+def wait_or_wake(stop: threading.Event, seconds: float, step: float = 5.0) -> bool:
+    """Wait up to `seconds`, returning early (True) if the computer slept in the meantime.
+
+    On macOS the monotonic clock stops during sleep while the wall clock keeps going, so a
+    wall-clock jump well past the monotonic one means the machine was asleep: the last scan
+    is stale and the next one shouldn't wait out the rest of the interval.
+    """
+    end = time.monotonic() + seconds
+    while not stop.is_set():
+        left = end - time.monotonic()
+        if left <= 0:
+            return False
+        wall, mono = time.time(), time.monotonic()
+        if stop.wait(min(step, left)):
+            return False
+        if (time.time() - wall) - (time.monotonic() - mono) > SLEEP_JUMP_S:
+            return True
+    return False
 
 
 def _static_file(path: str) -> Path | None:

@@ -32,6 +32,10 @@ log = logging.getLogger(__name__)
 
 OnFound = Callable[[ScanResult], None]
 US_SUBSCRIPTION_LIMIT = 100  # markets per Polymarket US subscription
+# Reconnect when no message has arrived for this long: after sleep or a network change the
+# socket can stay open but dead, with no error to react to.
+STALE_AFTER_S = 300.0
+SLEEP_JUMP_S = 30.0
 
 
 def _amount(value: Any) -> Any:
@@ -56,6 +60,8 @@ class FastWatcher:
         self._changed = threading.Event()
         self._stop = threading.Event()
         self._reported: dict[str, tuple[float, float]] = {}  # opportunity key -> (when, profit)
+        self._last_message = time.monotonic()
+        self._clock = (time.time(), time.monotonic())
         self.stats: dict[str, Any] = {"enabled": True, "connected": False, "watching_events": 0,
                                       "watching_markets": 0, "updates": 0, "checks": 0, "found": 0,
                                       "last_update": None, "error": None}
@@ -143,10 +149,10 @@ class FastWatcher:
                 await ws.connect()
                 for i in range(0, len(slugs), US_SUBSCRIPTION_LIMIT):
                     await ws.subscribe_market_data_lite(f"pmscan-{i}", slugs[i : i + US_SUBSCRIPTION_LIMIT])
-                self.stats.update(connected=True, error=None)
+                self._connected()
                 delay = 2.0
                 last_check = 0.0
-                while not (self._stop.is_set() or self._changed.is_set() or closed.is_set()):
+                while not (self._stop.is_set() or self._changed.is_set() or closed.is_set() or self._connection_stale()):
                     await asyncio.sleep(0.1)
                     if errors:
                         self.stats["error"] = errors[-1]
@@ -185,9 +191,9 @@ class FastWatcher:
                 async with AsyncPublicClient() as client:
                     spec = MarketSpec(asset_ids=tokens, custom_feature_enabled=True)
                     async with await client.subscribe([spec]) as stream:
-                        self.stats.update(connected=True, error=None)
+                        self._connected()
                         last_check = 0.0
-                        while not self._stop.is_set() and not self._changed.is_set():
+                        while not (self._stop.is_set() or self._changed.is_set() or self._connection_stale()):
                             try:
                                 self._apply(await asyncio.wait_for(stream.__anext__(), timeout=1.0))
                             except asyncio.TimeoutError:
@@ -216,7 +222,26 @@ class FastWatcher:
             asks = [lv.price for lv in p.asks]
             self._quote(p.asset_id, max(bids) if bids else None, min(asks) if asks else None)
 
+    def _connection_stale(self) -> bool:
+        """True when the stream should be reopened: silent too long, or the computer just slept.
+
+        The monotonic clock stops during macOS sleep while the wall clock doesn't.
+        """
+        wall, mono = time.time(), time.monotonic()
+        slept = (wall - self._clock[0]) - (mono - self._clock[1]) > SLEEP_JUMP_S
+        self._clock = (wall, mono)
+        if slept or mono - self._last_message > STALE_AFTER_S:
+            self.stats["error"] = "woke from sleep: reconnecting" if slept else "no updates for 5 minutes: reconnecting"
+            return True
+        return False
+
+    def _connected(self) -> None:
+        self._last_message = time.monotonic()
+        self._clock = (time.time(), time.monotonic())
+        self.stats.update(connected=True, error=None)
+
     def _quote(self, token: Any, bid: Any, ask: Any) -> None:
+        self._last_message = time.monotonic()
         with self._lock:
             hit = self._index.get(str(token))
             if not hit:

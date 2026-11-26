@@ -119,3 +119,17 @@ def test_polymarket_us_feed_needs_the_api_key(monkeypatch):
     scanner.client.venue = "us"
     asyncio.run(watcher._main_us())
     assert watcher.stats["enabled"] is False and "API key" in watcher.stats["error"]
+
+
+def test_reconnects_when_silent_or_after_sleep(monkeypatch):
+    from pmscan import fast
+
+    watcher, *_ = setup({})
+    assert watcher._connection_stale() is False
+    watcher._last_message -= fast.STALE_AFTER_S + 1
+    assert watcher._connection_stale() is True
+    watcher._connected()
+    assert watcher._connection_stale() is False and watcher.stats["error"] is None
+    watcher._clock = (watcher._clock[0] - 3600, watcher._clock[1])  # an hour of wall time, no monotonic time
+    assert watcher._connection_stale() is True
+    assert "sleep" in watcher.stats["error"]

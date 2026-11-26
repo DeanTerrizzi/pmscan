@@ -7,6 +7,10 @@ struct PmscanApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var model = AppModel.shared
 
+    init() {
+        SingleInstance.exitIfAlreadyRunning()
+    }
+
     var body: some Scene {
         WindowGroup("pmscan") {
             ContentView()

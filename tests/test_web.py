@@ -107,3 +107,42 @@ def test_paper_and_account_routes(tmp_path):
     assert snap["books"]["high_prob"]["open"] == []
     assert a.handle("/api/latest", {})[1]["paper"]["open_positions"] == 0
     assert a.handle("/api/account", {})[1] == {"connected": False}
+
+
+def test_wait_or_wake_returns_early_after_sleep(monkeypatch):
+    import threading
+
+    from pmscan import web
+
+    stop = threading.Event()
+    assert web.wait_or_wake(stop, 0.05, step=0.01) is False  # no sleep: waits it out
+    real = web.time.time
+    calls = iter(range(10_000))
+    monkeypatch.setattr(web.time, "time", lambda: real() + 120 * next(calls))  # wall clock races ahead
+    assert web.wait_or_wake(stop, 60, step=0.01) is True
+    stop.set()
+    assert web.wait_or_wake(stop, 60) is False
+
+
+def test_failed_scans_retry_sooner_and_back_off(monkeypatch, tmp_path):
+    import threading
+
+    from pmscan import web
+
+    stop, waits = threading.Event(), []
+
+    def fake_wait(_stop, seconds):
+        waits.append(round(seconds))
+        if len(waits) == 4:
+            stop.set()
+        return False
+
+    class Broken:
+        def scan(self):
+            raise ConnectionError("offline")
+
+    monkeypatch.setattr(web, "wait_or_wake", fake_wait)
+    state = web._State(interval=120, trader=None)
+    web._scan_loop(Broken(), state, tmp_path, stop, None)
+    assert waits == [15, 30, 60, 120]
+    assert state.error == "ConnectionError: offline"

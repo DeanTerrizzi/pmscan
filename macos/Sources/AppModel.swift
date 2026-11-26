@@ -182,6 +182,7 @@ final class AppModel: ObservableObject {
                               body: arb.title, route: arb.route)
             }
         }
+        backend.onNeedsRestart = { [weak self] in self?.restartScanner() }
         backend.onHalted = { reason in
             Notifier.post(title: "Trading halted", body: reason, route: Page.trading.rawValue)
         }

@@ -4,7 +4,9 @@ import IOKit.pwr_mgt
 import SwiftUI
 
 /// Opens pmscan at login with a per-user LaunchAgent (works on macOS 12, which lacks SMAppService).
-/// It starts in the background: menu-bar icon only, no window or Dock icon.
+/// It starts in the background: menu-bar icon only, no window or Dock icon. launchd runs the app
+/// itself (not `open`), so it can bring pmscan back if it ever crashes; quitting it on purpose
+/// (a normal exit) leaves it closed until the next login.
 enum LoginItem {
     static let backgroundFlag = "--background"
 
@@ -19,8 +21,12 @@ enum LoginItem {
         if enabled {
             let plist: [String: Any] = [
                 "Label": "app.pmscan.desktop.login",
-                "ProgramArguments": ["/usr/bin/open", "-g", "-a", Bundle.main.bundlePath, "--args", backgroundFlag],
+                "ProgramArguments": [Bundle.main.executablePath ?? "\(Bundle.main.bundlePath)/Contents/MacOS/pmscan", backgroundFlag],
                 "RunAtLoad": true,
+                "KeepAlive": ["SuccessfulExit": false],  // relaunch after a crash, not after Quit
+                "ThrottleInterval": 30,
+                "LimitLoadToSessionType": "Aqua",
+                "ProcessType": "Interactive",
             ]
             try? FileManager.default.createDirectory(at: plistURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             if let data = try? PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0) {
@@ -29,6 +35,22 @@ enum LoginItem {
         } else {
             try? FileManager.default.removeItem(at: plistURL)
         }
+    }
+}
+
+/// Only one pmscan at a time: two would run two scanners writing the same paper portfolios.
+enum SingleInstance {
+    static func exitIfAlreadyRunning() {
+        let env = ProcessInfo.processInfo.environment
+        guard env["PMSCAN_SNAPSHOT_DIR"] == nil, env["PMSCAN_DATA_DIR"] == nil,  // developer and test runs
+              let id = Bundle.main.bundleIdentifier else { return }
+        let me = ProcessInfo.processInfo.processIdentifier
+        guard NSRunningApplication.runningApplications(withBundleIdentifier: id)
+            .contains(where: { $0.processIdentifier != me && !$0.isTerminated }) else { return }
+        if !CommandLine.arguments.contains(LoginItem.backgroundFlag), let url = URL(string: "pmscan://main") {
+            NSWorkspace.shared.open(url)  // bring the running one's window forward instead
+        }
+        exit(0)
     }
 }
 
